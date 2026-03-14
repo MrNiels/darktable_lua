@@ -1,196 +1,205 @@
---[[
-Create thumbnails plugin for darktable
-  darktable is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-  
-  darktable is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-  
-  You should have received a copy of the GNU General Public License
-  along with darktable.  If not, see <http://www.gnu.org/licenses/>.
-]]
-
---[[About this Plugin
-This plugin adds the buttons 'create thumbnails' and 'delete thumbnails' to 'selected image[s]' module of darktable's lighttable view.
-----USAGE----
-Click the 'create thumbnails' button in the 'selected image[s]' module to let the script create full sized previews of all selected images.
-Click the 'delete thumbnails' button in the 'selected image[s]' module to let the script delete all previews/thumbnails of all selected images.
-To create (or delete) previews of all images of a collection:
-Use CTRL+A to select all images of current collection and then press the corresponding button.
-]]
-
 local dt = require "darktable"
 local du = require "lib/dtutils"
 
-du.check_min_api_version("8.0.0", "create_thumbnails_button")
+du.check_min_api_version("8.0.0", "generate_thumbnails")
 
-local PREFS_NAMESPACE = "create_thumbnails_button"
+local gettext = dt.gettext.gettext
+
+local function _(msgid)
+	return gettext(msgid)
+end
+
+local MODULE_NAME = "generate_thumbnails"
+local LIB_ID = "generate_thumbnails_gui"
+
 local THUMBNAIL_LEVELS = {
-    { level = 0, label = "level 0 (180x110)" },
-    { level = 1, label = "level 1 (360x225)" },
-    { level = 2, label = "level 2 (720x450)" },
-    { level = 3, label = "level 3 (1440x900)" },
-    { level = 4, label = "level 4 (1920x1200)" },
-    { level = 5, label = "level 5 (2560x1600)" },
-    { level = 6, label = "level 6 (4096x2560)" },
-    { level = 7, label = "level 7 (5120x3200)" },
-    { level = 8, label = "level 8 (full size)" }
+	{ level = 0, label = _("level 0 (180x110)") },
+	{ level = 1, label = _("level 1 (360x225)") },
+	{ level = 2, label = _("level 2 (720x450)") },
+	{ level = 3, label = _("level 3 (1440x900)") },
+	{ level = 4, label = _("level 4 (1920x1200)") },
+	{ level = 5, label = _("level 5 (2560x1600)") },
+	{ level = 6, label = _("level 6 (4096x2560)") },
+	{ level = 7, label = _("level 7 (5120x3200)") },
+	{ level = 8, label = _("level 8 (full size)") }
 }
 
-for _, level_definition in ipairs(THUMBNAIL_LEVELS) do
-    local level = level_definition.level
-    dt.preferences.register(
-        PREFS_NAMESPACE,
-        "generate_level_" .. level,
-        "bool",
-        "generate thumbnail " .. level_definition.label,
-        "create cache level " .. level_definition.label .. " when running 'create thumbnails'",
-        true
-    )
-end
+local wg = {}
 
--- stop running thumbnail creation
+wg.level_0 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[1].label, value = true}
+wg.level_1 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[2].label, value = true}
+wg.level_2 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[3].label, value = true}
+wg.level_3 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[4].label, value = true}
+wg.level_4 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[5].label, value = true}
+wg.level_5 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[6].label, value = true}
+wg.level_6 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[7].label, value = true}
+wg.level_7 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[8].label, value = true}
+wg.level_8 = dt.new_widget("check_button"){label = THUMBNAIL_LEVELS[9].label, value = true}
+
 local function stop_job(job)
-    job.valid = false
+	job.valid = false
 end
 
--- return "1 image" if amount_of_images is 1 else "<amount_of_images> images"
-local function image_count_to_text(amount_of_images)
-    return amount_of_images .. " image" .. (amount_of_images == 1 and "" or "s")
+local function image_count_to_text(image_count)
+	return image_count .. " image" .. (image_count == 1 and "" or "s")
 end
 
--- print the given message to the user and log the given message
 local function print_and_log(message)
-    dt.print(message)
-    dt.print_log(message)
+	dt.print(message)
+	dt.print_log(message)
 end
 
-local function get_selected_thumbnail_levels()
-    local selected_levels = {}
+local function get_action_images()
+	return dt.gui.action_images
+end
 
-    for _, level_definition in ipairs(THUMBNAIL_LEVELS) do
-        local level = level_definition.level
-        local enabled = dt.preferences.read(PREFS_NAMESPACE, "generate_level_" .. level, "bool")
-        if enabled then
-            selected_levels[#selected_levels + 1] = level
-        end
-    end
+local function get_selected_levels()
+	local levels = {}
 
-    return selected_levels
+	if wg.level_0.value then levels[#levels + 1] = THUMBNAIL_LEVELS[1].level end
+	if wg.level_1.value then levels[#levels + 1] = THUMBNAIL_LEVELS[2].level end
+	if wg.level_2.value then levels[#levels + 1] = THUMBNAIL_LEVELS[3].level end
+	if wg.level_3.value then levels[#levels + 1] = THUMBNAIL_LEVELS[4].level end
+	if wg.level_4.value then levels[#levels + 1] = THUMBNAIL_LEVELS[5].level end
+	if wg.level_5.value then levels[#levels + 1] = THUMBNAIL_LEVELS[6].level end
+	if wg.level_6.value then levels[#levels + 1] = THUMBNAIL_LEVELS[7].level end
+	if wg.level_7.value then levels[#levels + 1] = THUMBNAIL_LEVELS[8].level end
+	if wg.level_8.value then levels[#levels + 1] = THUMBNAIL_LEVELS[9].level end
+
+	return levels
 end
 
 local function levels_to_text(levels)
-    local level_texts = {}
-
-    for _, level in ipairs(levels) do
-        level_texts[#level_texts + 1] = tostring(level)
-    end
-
-    return table.concat(level_texts, ",")
+	local texts = {}
+	for _, level in ipairs(levels) do
+		texts[#texts + 1] = tostring(level)
+	end
+	return table.concat(texts, ",")
 end
 
--- add button to 'selected images' module
-dt.gui.libs.image.register_action(
-    "create_thumbnails_button",
-    "create thumbnails",
-    function(event, images)
-        local selected_levels = get_selected_thumbnail_levels()
+local function generate_thumbnails()
+	local images = get_action_images()
 
-        if #selected_levels == 0 then
-            print_and_log("creating thumbnails canceled: no thumbnail sizes selected in preferences.")
-            return
-        end
+	if #images == 0 then
+		print_and_log(_("no images selected"))
+		return
+	end
 
-        print_and_log("creating thumbnail levels [" .. levels_to_text(selected_levels) .. "] for " .. image_count_to_text(#images) .. " ...")
+	local selected_levels = get_selected_levels()
+	if #selected_levels == 0 then
+		print_and_log(_("no thumbnail sizes selected"))
+		return
+	end
 
-        -- create a new progress_bar displayed in darktable.gui.libs.backgroundjobs
-        job = dt.gui.create_job("creating thumbnails...", true, stop_job)
+	print_and_log(_("creating thumbnail levels") .. " [" .. levels_to_text(selected_levels) .. "] " ..
+		_("for") .. " " .. image_count_to_text(#images) .. " ...")
 
-        for i, image in pairs(images) do
-            -- generate selected thumbnail levels
-            -- check only once if the mipmap cache directories exist
-            local check_cache_directories = i == 1
-            for _, level in ipairs(selected_levels) do
-                image:generate_cache(check_cache_directories, level, level)
-                check_cache_directories = false
-            end
+	local job = dt.gui.create_job(_("creating thumbnails..."), true, stop_job)
 
-            -- update progress_bar
-            job.percent = i / #images
+	for i, image in ipairs(images) do
+		local check_cache_directories = i == 1
+		for _, level in ipairs(selected_levels) do
+			image:generate_cache(check_cache_directories, level, level)
+			check_cache_directories = false
+		end
 
-            -- sleep for a short moment to give stop_job callback function a chance to run
-            dt.control.sleep(10)
+		job.percent = i / #images
+		dt.control.sleep(10)
 
-            -- stop early if darktable is shutdown or the cancle button of the progress bar is pressed
-            if dt.control.ending or not job.valid then
-                print_and_log("creating thumbnails canceled after processing " .. i .. "/" .. image_count_to_text(#images) .. "!")
-                break
-            end
-        end
+		if dt.control.ending or not job.valid then
+			print_and_log(_("creating thumbnails canceled after processing") .. " " .. i .. "/" .. image_count_to_text(#images) .. "!")
+			return
+		end
+	end
 
-        -- if job was not canceled
-        if(job.valid) then
-            -- stop job and remove progress_bar from ui
-            job.valid = false
+	job.valid = false
+	print_and_log(_("creating thumbnail levels") .. " [" .. levels_to_text(selected_levels) .. "] " ..
+		_("for") .. " " .. image_count_to_text(#images) .. " " .. _("done") .. "!")
+end
 
-            print_and_log("creating thumbnail levels [" .. levels_to_text(selected_levels) .. "] for " ..  image_count_to_text(#images) .. " done!")
-        end
-    end,
-    "create selected preview/thumbnail sizes of all selected images"
+local function remove_thumbnails()
+	local images = get_action_images()
+
+	if #images == 0 then
+		print_and_log(_("no images selected"))
+		return
+	end
+
+	print_and_log(_("deleting thumbnails for") .. " " .. image_count_to_text(#images) .. " ...")
+
+	local job = dt.gui.create_job(_("deleting thumbnails..."), true, stop_job)
+
+	for i, image in ipairs(images) do
+		image:drop_cache()
+
+		job.percent = i / #images
+		dt.control.sleep(10)
+
+		if dt.control.ending or not job.valid then
+			print_and_log(_("deleting thumbnails canceled after processing") .. " " .. i .. "/" .. image_count_to_text(#images) .. "!")
+			return
+		end
+	end
+
+	job.valid = false
+	print_and_log(_("deleting thumbnails for") .. " " .. image_count_to_text(#images) .. " " .. _("done") .. "!")
+end
+
+dt.register_lib(
+	LIB_ID,
+	_("generate thumbnails"),
+	true,
+	false,
+	{[dt.gui.views.lighttable] = {"DT_UI_CONTAINER_PANEL_RIGHT_CENTER", 100}},
+	dt.new_widget("box"){
+		orientation = "vertical",
+		dt.new_widget("label"){label = _("thumbnail sizes")},
+		wg.level_0,
+		wg.level_1,
+		wg.level_2,
+		wg.level_3,
+		wg.level_4,
+		wg.level_5,
+		wg.level_6,
+		wg.level_7,
+		wg.level_8,
+		dt.new_widget("button"){
+			label = _("generate thumbnails"),
+			tooltip = _("generate selected thumbnail sizes for selected images"),
+			clicked_callback = function()
+				generate_thumbnails()
+			end
+		},
+		dt.new_widget("button"){
+			label = _("remove thumbnails"),
+			tooltip = _("remove all thumbnails for selected images"),
+			clicked_callback = function()
+				remove_thumbnails()
+			end
+		}
+	}
 )
 
+local function restart()
+	dt.gui.libs[LIB_ID].visible = true
+end
 
--- add button to 'selected images' module
-dt.gui.libs.image.register_action(
-    "delete_thumbnails_button",
-    "delete thumbnails",
-    function(event, images)
-        print_and_log("deleting thumbnails of " .. image_count_to_text(#images) .. " ...")
-
-        -- create a new progress_bar displayed in darktable.gui.libs.backgroundjobs
-        job = dt.gui.create_job("deleting thumbnails...", true, stop_job)
-
-        for i, image in pairs(images) do
-            -- delete all thumbnails
-            image:drop_cache()
-
-            -- update progress_bar
-            job.percent = i / #images
-
-            -- sleep for a short moment to give stop_job callback function a chance to run
-            dt.control.sleep(10)
-
-            -- stop early if darktable is shutdown or the cancle button of the progress bar is pressed
-            if dt.control.ending or not job.valid then
-                print_and_log("deleting thumbnails canceled after processing " .. i .. "/" .. image_count_to_text(#images) .. "!")
-                break
-            end
-        end
-
-        -- if job was not canceled
-        if(job.valid) then
-            -- stop job and remove progress_bar from ui
-            job.valid = false
-
-            print_and_log("deleting thumbnails of " ..  image_count_to_text(#images) .. " done!")
-        end
-    end,
-    "delete all thumbnails of all selected images"
-)
-
--- clean up function that is called when this module is getting disabled
 local function destroy()
-    dt.gui.libs.image.destroy_action("create_thumbnails_button")
-    dt.gui.libs.image.destroy_action("delete_thumbnails_button")
+	dt.gui.libs[LIB_ID].visible = false
 end
-
 
 local script_data = {}
-script_data.destroy = destroy -- function to destory the script
-script_data.destroy_method = nil -- set to hide for libs since we can't destroy them commpletely yet
-script_data.restart = nil -- how to restart the (lib) script after it's been hidden - i.e. make it visible again
+
+script_data.metadata = {
+	name = _("generate thumbnails"),
+	purpose = _("generate or remove thumbnails from a right panel gui in lighttable"),
+	author = "mr_niels",
+	help = ""
+}
+
+script_data.destroy = destroy
+script_data.destroy_method = "hide"
+script_data.restart = restart
+script_data.show = restart
+
 return script_data
